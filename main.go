@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"golang.design/x/clipboard"
+	"io"
 	"maps"
 	"os"
 	"slices"
@@ -12,16 +15,54 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type Snippets map[string][]string
+
 type model struct {
 	textarea textarea.Model
-	snippets map[string][]string
+	snippets Snippets
 	cursor   int
 	selected map[int]struct{}
 	active   string
 }
 
+type readSnippetsMsg struct{ snippets Snippets }
+
+func readData() tea.Msg {
+	var snippets Snippets
+	jsonFile, err := os.Open("data.json")
+	defer jsonFile.Close()
+	if err != nil {
+		fmt.Println(err)
+	}
+	byteValue, _ := io.ReadAll(jsonFile)
+	json.Unmarshal(byteValue, &snippets)
+	return readSnippetsMsg{snippets}
+}
+
+type clipboardErrMsg struct{ err error }
+
+func checkClipboard() tea.Msg {
+	err := clipboard.Init()
+	if err != nil {
+		return clipboardErrMsg{err}
+	}
+	return nil
+}
+
+func (m model) save() error {
+	b, err := json.Marshal(m.snippets)
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile("data.json", b, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (m model) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(readData, textarea.Blink, checkClipboard)
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var taCmd tea.Cmd
@@ -29,6 +70,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.textarea, taCmd = m.textarea.Update(msg)
 
 	switch msg := msg.(type) {
+	case clipboardErrMsg:
+		fmt.Println("err with clipboard")
+		return m, tea.Quit
+	case readSnippetsMsg:
+		m.snippets = msg.snippets
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEsc:
@@ -42,9 +88,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			if !m.textarea.Focused() {
 				val := m.textarea.Value()
-				if _, ok := m.snippets["go"]; ok {
-					m.snippets["go"] = append(m.snippets["go"], val)
-					m.textarea.Reset()
+				if len(val) > 0 {
+					if _, ok := m.snippets["go"]; ok {
+						m.snippets["go"] = append(m.snippets["go"], val)
+						m.textarea.Reset()
+					}
 				}
 			}
 		case tea.KeySpace:
@@ -58,6 +106,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyRunes:
 			if !m.textarea.Focused() {
 				switch msg.String() {
+				case "q":
+					err := m.save()
+					if err != nil {
+						fmt.Println(err)
+					}
+					return m, tea.Quit
 				case "k":
 					if m.cursor > 0 {
 						m.cursor--
@@ -68,21 +122,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				case "i":
 					m.textarea.Focus()
+				case "y":
+					currSnippet := m.snippets[m.active][m.cursor]
+					clipboard.Write(clipboard.FmtText, []byte(currSnippet))
+				case "c":
+					b := clipboard.Read(clipboard.FmtText)
+					m.snippets[m.active] = append(m.snippets[m.active], string(b))
 				case "d":
 					if len(m.snippets[m.active]) > 0 {
-						s := []string{}
+						newSnippets := []string{}
 						for idx, snippet := range m.snippets[m.active] {
 							if slices.Contains(slices.Collect(maps.Keys(m.selected)), idx) {
 								delete(m.selected, idx)
 							} else {
-								s = append(s, snippet)
+								newSnippets = append(newSnippets, snippet)
 							}
 						}
-						m.snippets[m.active] = s
+						m.snippets[m.active] = newSnippets
 					}
 				}
 			}
 		case tea.KeyCtrlC:
+			err := m.save()
+			if err != nil {
+				fmt.Println(err)
+			}
 			return m, tea.Quit
 		}
 
@@ -101,7 +165,8 @@ func (m model) View() string {
 					Border(lipgloss.NormalBorder())
 			} else {
 				style = style.
-					Border(lipgloss.ASCIIBorder())
+					Border(lipgloss.ASCIIBorder()).
+					BorderForeground(lipgloss.Color("#898989"))
 			}
 			_, ok := m.selected[idx]
 			if ok {
@@ -118,33 +183,17 @@ func (m model) View() string {
 
 }
 
-func listSnippets() map[string][]string {
-	// TODO: Get from json file
-	snippets := make(map[string][]string)
-	return snippets
-}
-
 func initialModel() tea.Model {
-	ta := textarea.New()
-
-	snippets := listSnippets()
-	snippets["go"] = []string{`func main1() {
-	return ""
-}`, `func main2() {
-	return ""
-}`, `func main3() {
-	return ""
-}`}
-
 	return model{
-		textarea: ta, snippets: snippets,
+		textarea: textarea.New(),
+		snippets: make(map[string][]string),
 		selected: make(map[int]struct{}),
 		active:   "go",
 	}
 }
 
 func main() {
-	p := tea.NewProgram(initialModel())
+	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
