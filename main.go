@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -100,6 +101,7 @@ type model struct {
 	ready     bool
 	focus     focusTarget
 	selected  map[int]struct{}
+	textinput textinput.Model
 }
 
 func (m *model) AppendSnippet(s Snippet) {
@@ -139,6 +141,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, keys.New):
+			if m.focus == focusViewport {
+				break
+			}
 			b := clipboard.Read(clipboard.FmtText)
 			if len(b) == 0 {
 				return m, nil
@@ -167,17 +172,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.dimension.UpdateDimension(msg.Height, msg.Width)
-		width, height := m.dimension.width, m.dimension.height
-		m.list.SetSize(width, height)
-		fmt.Println(lipgloss.Width(m.list.View()))
+
+		// Configure list size
+		m.list.SetSize(0, m.dimension.height-3)
+
+		// Configure text input (full width)
+		m.textinput.Width = m.dimension.width
+
+		// Configure viewport
+		vpWidth := m.dimension.width - lipgloss.Width(m.list.View()) - 4
+		vpHeight := m.dimension.height - 3
 
 		if !m.ready {
-			m.viewport = viewport.New(width, height)
+			m.viewport = viewport.New(vpWidth, vpHeight)
 			m.viewport.SetContent(m.snippets[m.list.Index()].RenderSnippet())
 			m.ready = true
 		} else {
-			m.viewport.Width = width
-			m.viewport.Height = height
+			m.viewport.Width = vpWidth
+			m.viewport.Height = vpHeight
 		}
 	}
 
@@ -196,32 +208,30 @@ func (m model) View() string {
 	if !m.ready {
 		return "\n  Initializing..."
 	}
-	var main string
-
-	const spacing = 4
+	var viewport string
 
 	sidebar := lipgloss.NewStyle().
-		MarginRight(spacing).
+		MarginRight(2).
 		Render(m.list.View())
-
-	available := m.dimension.width - lipgloss.Width(sidebar)
-	m.viewport.Width = available - 2 // Left + Right border = 2
-	m.viewport.Height = m.dimension.height - 2
 
 	switch m.focus {
 	case focusViewport:
-		main = lipgloss.NewStyle().
+		viewport = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(lipgloss.Color("170")).
 			Render(m.viewport.View())
 
 	case focusList:
-		main = lipgloss.NewStyle().
+		viewport = lipgloss.NewStyle().
 			Border(lipgloss.ASCIIBorder()).
 			Render(m.viewport.View())
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, main)
+	main := lipgloss.
+		NewStyle().
+		Render(lipgloss.JoinHorizontal(lipgloss.Top, sidebar, viewport))
+
+	return lipgloss.JoinVertical(lipgloss.Top, main, m.textinput.View())
 }
 
 func initialModel() tea.Model {
@@ -248,6 +258,8 @@ func initialModel() tea.Model {
 			Language:  "go",
 		},
 	}
+	ti := textinput.New()
+	ti.Prompt = "Type something..."
 
 	items := make([]list.Item, len(snippets))
 	for i, s := range snippets {
@@ -258,10 +270,14 @@ func initialModel() tea.Model {
 	list.SetShowStatusBar(false)
 	list.SetShowHelp(false)
 	list.DisableQuitKeybindings()
-	list.KeyMap.Filter.SetEnabled(false) // TODO: Add filtering later
+	list.SetFilteringEnabled(false)
 	list.InfiniteScrolling = true
 
-	return model{snippets: snippets, list: list}
+	return model{
+		snippets:  snippets,
+		list:      list,
+		textinput: ti,
+	}
 }
 
 func main() {
