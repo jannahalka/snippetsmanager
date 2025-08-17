@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"golang.design/x/clipboard"
 )
 
 type Snippet struct {
@@ -26,7 +27,10 @@ func (s Snippet) ShowItem(i int) string {
 }
 
 func (s Snippet) RenderSnippet() string {
-	out, err := glamour.Render(s.Content, "dracula")
+	out, err := glamour.Render(
+		fmt.Sprintf("```%s\n%s\n```", s.Language, s.Content),
+		"dracula",
+	)
 	if err != nil {
 		fmt.Println("TODO: Handle err")
 	}
@@ -56,6 +60,9 @@ type keyMap struct {
 	Focus   key.Binding
 	UnFocus key.Binding
 	Quit    key.Binding
+	New     key.Binding
+	Select  key.Binding
+	Delete  key.Binding
 }
 
 var keys = keyMap{
@@ -71,6 +78,18 @@ var keys = keyMap{
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q/ctrl+c", "quit"),
 	),
+	New: key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "new"),
+	),
+	Select: key.NewBinding(
+		key.WithKeys(" "),
+		key.WithHelp("space", "select"),
+	),
+	Delete: key.NewBinding(
+		key.WithKeys("d", "backspace"),
+		key.WithHelp("d/del", "delete"),
+	),
 }
 
 type model struct {
@@ -80,18 +99,37 @@ type model struct {
 	snippets  []Snippet
 	ready     bool
 	focus     focusTarget
+	selected  map[int]struct{}
 }
 
-type readSnippetsMsg struct{ snippets []Snippet }
+func (m *model) AppendSnippet(s Snippet) {
+	m.snippets = append(m.snippets, s)
+}
+
+type (
+	readSnippetsMsg struct{ snippets []Snippet }
+	clipboardMsg    error
+)
+
+func checkClipboard() tea.Msg {
+	err := clipboard.Init()
+	if err != nil {
+		return clipboardMsg(err)
+	}
+	return nil
+}
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return checkClipboard
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case clipboardMsg:
+		return m, tea.Quit
+
 	case updateViewportContentMsg:
 		m.viewport.SetContent(m.snippets[msg.index].RenderSnippet())
 
@@ -100,10 +138,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, keys.New):
+			b := clipboard.Read(clipboard.FmtText)
+			if len(b) == 0 {
+				return m, nil
+			}
+
+			newIdx := len(m.snippets)
+			newSnippet := Snippet{
+				Id:        "sklfjdaslk",
+				Content:   string(b),
+				Title:     fmt.Sprintf("My new snippet %d", newIdx),
+				CreatedAt: time.Now(),
+				Language:  "go",
+			}
+			m.AppendSnippet(newSnippet)
+			return m, m.list.InsertItem(newIdx, newSnippet)
+
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
+
 		case key.Matches(msg, keys.Focus):
 			m.focus = focusViewport
+
 		case key.Matches(msg, keys.UnFocus):
 			m.focus = focusList
 		}
@@ -155,6 +212,7 @@ func (m model) View() string {
 	case focusViewport:
 		main = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("170")).
 			Render(m.viewport.View())
 
 	case focusList:
@@ -171,21 +229,21 @@ func initialModel() tea.Model {
 		{
 			Id:        "1",
 			Title:     "Main example",
-			Content:   "```go\nfunc main() {}\n```",
+			Content:   "func main() {}",
 			CreatedAt: time.Now(),
 			Language:  "go",
 		},
 		{
 			Id:        "2",
 			Title:     "Foo example",
-			Content:   "```go\nfunc foo() {}\n```",
+			Content:   "func foo() {}",
 			CreatedAt: time.Now(),
 			Language:  "go",
 		},
 		{
 			Id:        "1",
 			Title:     "Main exampleeeeeeeeeeeeeeeeeee",
-			Content:   "```go\nfunc main() {}\n```",
+			Content:   "func main() {}",
 			CreatedAt: time.Now(),
 			Language:  "go",
 		},
@@ -199,7 +257,9 @@ func initialModel() tea.Model {
 	list.SetShowTitle(false)
 	list.SetShowStatusBar(false)
 	list.SetShowHelp(false)
-	list.KeyMap.Quit.SetEnabled(false)
+	list.DisableQuitKeybindings()
+	list.KeyMap.Filter.SetEnabled(false) // TODO: Add filtering later
+	list.InfiniteScrolling = true
 
 	return model{snippets: snippets, list: list}
 }

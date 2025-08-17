@@ -45,12 +45,26 @@ func (d listDelegate) Spacing() int {
 type updateViewportContentMsg struct {
 	index int
 }
+type selectItemMsg struct {
+	index int
+}
 
 func (d listDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.KeyMap.CursorDown), key.Matches(msg, m.KeyMap.CursorUp):
+			if len(m.Items()) == 0 {
+				break
+			}
+			return func() tea.Msg {
+				return updateViewportContentMsg{m.Index()}
+			}
+		case key.Matches(msg, keys.Delete):
+			m.RemoveItem(m.Index())
+			if len(m.Items()) == 0 {
+				keys.Delete.SetEnabled(false)
+			}
 			return func() tea.Msg {
 				return updateViewportContentMsg{m.Index()}
 			}
