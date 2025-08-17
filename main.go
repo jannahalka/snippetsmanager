@@ -172,14 +172,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.dimension.UpdateDimension(msg.Height, msg.Width)
-
-		// Configure list size
 		m.list.SetSize(0, m.dimension.height-3)
-
-		// Configure text input (full width)
 		m.textinput.Width = m.dimension.width
 
-		// Configure viewport
 		vpWidth := m.dimension.width - lipgloss.Width(m.list.View()) - 4
 		vpHeight := m.dimension.height - 3
 
