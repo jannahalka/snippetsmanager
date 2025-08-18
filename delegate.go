@@ -19,13 +19,12 @@ func (d listDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		return
 	}
 
-	fn := lipgloss.NewStyle().PaddingLeft(4).Render
+	fn := lipgloss.NewStyle().Padding(0, 1).Render
 
 	if index == m.Index() {
 		fn = func(strs ...string) string {
 			return lipgloss.
 				NewStyle().
-				PaddingLeft(2).
 				Foreground(lipgloss.Color("170")).
 				Render("> " + strings.Join(strs, " "))
 		}
@@ -39,7 +38,7 @@ func (d listDelegate) Height() int {
 }
 
 func (d listDelegate) Spacing() int {
-	return 1
+	return 0
 }
 
 type updateViewportContentMsg struct {
@@ -65,9 +64,14 @@ func (d listDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 			if len(m.Items()) == 0 {
 				keys.Delete.SetEnabled(false)
 			}
-			return func() tea.Msg {
-				return updateViewportContentMsg{m.Index()}
-			}
+			return tea.Batch(
+				func() tea.Msg {
+					return updateViewportContentMsg{m.Index()}
+				},
+				func() tea.Msg {
+					return statusChangeMsg{severity: INFO, content: fmt.Sprintf("DELETED SNIPPET")}
+				},
+			)
 		}
 	}
 
